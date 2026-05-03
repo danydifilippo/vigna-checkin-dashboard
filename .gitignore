@@ -1,0 +1,6 @@
+.env
+node_modules/
+npm-debug.log*
+reference-app/
+swagger-integration-v2.json
+swagger-integration-v3.json

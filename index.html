@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#a51074" />
+    <title>Vigna Check-in Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Vigna Check-in</p>
+        <h1 id="currentEventTitle">Seleziona un evento</h1>
+      </div>
+      <button class="icon-btn" type="button" id="settingsToggle" title="Configurazione">⚙</button>
+    </header>
+
+    <main class="app-shell">
+      <section class="panel settings-panel hidden" id="settingsPanel">
+        <div class="section-head">
+          <h2>Configurazione API</h2>
+          <span id="authStatus">Non collegato</span>
+        </div>
+        <form id="settingsForm" class="settings-grid">
+          <label>
+            Email DWS
+            <input id="dwsEmail" type="email" autocomplete="username" placeholder="email personale DWS" />
+          </label>
+          <label>
+            Password DWS
+            <input id="dwsPassword" type="password" autocomplete="current-password" placeholder="password personale DWS" />
+          </label>
+          <label>
+            Bearer token
+            <input id="bearerToken" type="password" autocomplete="off" placeholder="opzionale, se lo hai gia" />
+          </label>
+          <label>
+            APIKey
+            <input id="apiKey" type="password" autocomplete="off" placeholder="APIKey Divinea" />
+          </label>
+          <label>
+            Winery ID
+            <input id="wineryId" type="text" />
+          </label>
+          <label>
+            Base URL CRM API
+            <input id="dwsBase" type="url" />
+          </label>
+          <button type="submit">Salva</button>
+          <button type="button" class="secondary-btn" id="loginBtn">Login DWS</button>
+        </form>
+      </section>
+
+      <section class="panel search-panel">
+        <div class="section-head">
+          <div>
+            <h2>1. Cerca esperienze per data</h2>
+            <p>Scegli la data, carica i titoli evento da Divinea e poi seleziona quello da gestire.</p>
+          </div>
+        </div>
+        <form id="eventSearchForm" class="search-grid">
+          <label>
+            Dal
+            <input id="dateFrom" type="date" required />
+          </label>
+          <label>
+            Al
+            <input id="dateTo" type="date" required />
+          </label>
+          <button type="submit">Cerca esperienze</button>
+        </form>
+        <div id="notice" class="notice">Cerca per data: i titoli arrivano dall'endpoint pubblico experiences.</div>
+        <div id="eventsList" class="events-grid"></div>
+      </section>
+
+      <section class="stats-strip" id="statsStrip">
+        <div><strong id="statBookings">0</strong><span>Prenotazioni</span></div>
+        <div><strong id="statArrived">0</strong><span>Arrivati</span></div>
+        <div><strong id="statPeople">0</strong><span>Persone prenotate</span></div>
+        <div><strong id="statDue">€0,00</strong><span>Da pagare</span></div>
+      </section>
+
+      <section class="panel">
+        <label>
+          Cerca nominativo
+          <input id="reservationSearch" type="search" placeholder="Cerca nelle prenotazioni e negli arrivati" />
+        </label>
+      </section>
+
+      <section class="cards-panel bookings-panel">
+        <div class="section-head">
+          <h2>2. Prenotazioni</h2>
+          <div class="section-actions">
+            <span id="bookingCount">0 righe</span>
+            <button type="button" class="add-btn" id="addBooking" title="Aggiungi prenotazione">+</button>
+          </div>
+        </div>
+        <div class="reservation-cards" id="bookingsCards"></div>
+      </section>
+
+      <section class="cards-panel arrived-panel">
+        <div class="section-head">
+          <h2>3. Arrivati</h2>
+          <span id="arrivedCount">0 righe</span>
+        </div>
+        <div class="reservation-cards" id="arrivedCards"></div>
+      </section>
+
+      <section class="table-panel hidden-table">
+        <div class="section-head">
+          <h2>Tabella prenotazioni</h2>
+        </div>
+        <div class="table-wrap">
+          <table id="bookingsTable"></table>
+        </div>
+      </section>
+
+      <section class="table-panel hidden-table">
+        <div class="section-head">
+          <h2>Tabella arrivati</h2>
+        </div>
+        <div class="table-wrap">
+          <table id="arrivedTable"></table>
+        </div>
+      </section>
+
+      <section class="table-panel totals-panel">
+        <div class="section-head">
+          <h2>4. Totali</h2>
+          <div class="section-actions">
+            <button type="button" class="secondary-btn compact" id="downloadReport">Scarica Excel</button>
+            <button type="button" class="compact" id="closeAndSendReport">Salva e invia report</button>
+            <button type="button" class="secondary-btn compact" id="clearData">Svuota dati</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="totalsTable"></table>
+        </div>
+      </section>
+    </main>
+
+    <div class="modal-overlay" id="reservationModal" aria-hidden="true">
+      <section class="reservation-sheet" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="sheet-handle"></div>
+        <div class="sheet-head">
+          <div>
+            <p class="eyebrow dark">Dettaglio prenotazione</p>
+            <h2 id="modalTitle">Prenotazione</h2>
+          </div>
+          <button type="button" class="secondary-btn compact" id="modalClose">Chiudi</button>
+        </div>
+
+        <form id="reservationForm" class="reservation-form">
+          <label class="wide">
+            Nominativo
+            <input id="m-nominativo" type="text" />
+          </label>
+          <label class="wide">
+            Note
+            <textarea id="m-note"></textarea>
+          </label>
+
+          <div class="form-group">
+            <h3>Prenotati</h3>
+            <label>Adulti <input id="m-adultiPrenotati" type="number" step="1" /></label>
+            <label>Bambini <input id="m-bambiniPrenotati" type="number" step="1" /></label>
+          </div>
+
+          <div class="form-group accent">
+            <h3>Arrivati</h3>
+            <label>Adulti <input id="m-adulti" type="number" step="1" /></label>
+            <label>Bambini <input id="m-bambini" type="number" step="1" /></label>
+          </div>
+
+          <div class="form-group">
+            <h3>Prezzi unitari</h3>
+            <label>Prezzo adulti <input id="m-priceAdulti" type="number" step="0.01" /></label>
+            <label>Prezzo bambini <input id="m-priceBambini" type="number" step="0.01" /></label>
+          </div>
+
+          <div class="form-group">
+            <h3>Aggiunte</h3>
+            <label>Sconto <input id="m-sconto" type="number" step="0.01" /></label>
+            <label>Extra <input id="m-extra" type="number" step="0.01" /></label>
+            <label>Bottiglie <input id="m-bottiglie" type="number" step="0.01" /></label>
+          </div>
+
+          <div class="form-group accent">
+            <h3>Pagamenti</h3>
+            <label>PAYPAL <input id="m-paypal" type="number" step="0.01" /></label>
+            <label>Cash <input id="m-cash" type="number" step="0.01" /></label>
+            <label>POS <input id="m-pos" type="number" step="0.01" /></label>
+          </div>
+
+          <div class="sheet-totals">
+            <div><span>Prenotati</span><strong id="m-prenotatiTot">0</strong></div>
+            <div><span>Arrivati</span><strong id="m-arrivatiTot">0</strong></div>
+            <div><span>Da pagare</span><strong id="m-daPagare">€0,00</strong></div>
+            <div><span>Pagato</span><strong id="m-pagato">€0,00</strong></div>
+            <div><span>Ancora</span><strong id="m-ancora">€0,00</strong></div>
+          </div>
+
+          <div class="sheet-actions">
+            <button type="submit">Salva modifiche</button>
+            <button type="button" class="ok-btn" id="modalCheckin">OK Arrivato</button>
+            <button type="button" class="back-btn" id="modalBack">Riporta in prenotazioni</button>
+            <button type="button" class="danger-btn" id="modalDelete">Elimina prenotazione</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
