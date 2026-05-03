@@ -212,7 +212,7 @@ async function loginDws() {
 }
 
 async function fetchExperiences(dateFrom, dateTo) {
-  if (state.config.bearerToken) {
+  if (state.config.bearerToken || publicConfig.hasServerDwsLogin) {
     return fetchDwsEventsByDate(dateFrom, dateTo);
   }
 
@@ -614,7 +614,7 @@ function formatStateCounts(counts) {
 }
 
 async function fetchReservationsByExperience(experienceId) {
-  if (!state.config.bearerToken) {
+  if (!state.config.bearerToken && !publicConfig.hasServerDwsLogin) {
     throw new Error("Inserisci il Bearer token DWS in Configurazione per importare le prenotazioni.");
   }
 
