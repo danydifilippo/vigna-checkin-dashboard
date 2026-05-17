@@ -127,7 +127,7 @@ async function fetchSharedEventState(event) {
 async function syncCurrentEventState() {
   if (!state.currentEvent?.id || !publicConfig.hasSupabase) return;
   try {
-    await fetch("/api/event-state", {
+    const response = await fetch("/api/event-state", {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -139,8 +139,13 @@ async function syncCurrentEventState() {
         status: "open"
       })
     });
+    const payload = await parseJsonResponse(response);
+    if (!response.ok) {
+      console.warn("Sync Supabase fallito", payload);
+      setNotice(`Attenzione: salvataggio cloud non riuscito (${payload.message || response.status}).`, true);
+    }
   } catch {
-    // Sync is best-effort; local work must remain usable offline/with weak signal.
+    setNotice("Attenzione: salvataggio cloud non riuscito. Controlla connessione/Supabase.", true);
   }
 }
 
@@ -558,8 +563,23 @@ async function loadReservationsForEvent(event) {
     persistCurrentEventData();
     const savedEvent = state.eventData[event.id] || {};
     const sharedEvent = publicConfig.hasSupabase ? await fetchSharedEventState(event).catch(() => null) : null;
-    const savedArrived = sharedEvent?.arrived || savedEvent.arrived || [];
-    const savedBookings = sharedEvent?.bookings || savedEvent.bookings || [];
+    if (sharedEvent?.event && (sharedEvent.bookings?.length || sharedEvent.arrived?.length)) {
+      state.currentEvent = {
+        id: event.id,
+        title: event.title,
+        date: $("#dateFrom").value || dateToday()
+      };
+      state.bookings = sharedEvent.bookings || [];
+      state.arrived = sharedEvent.arrived || [];
+      persistCurrentEventData();
+      saveState();
+      render();
+      setNotice(`Caricato stato salvato in cloud per "${event.title}".`);
+      return;
+    }
+
+    const savedArrived = savedEvent.arrived || [];
+    const savedBookings = savedEvent.bookings || [];
     const savedManualBookings = savedBookings.filter((row) => !row.dwsId);
     const payload = event.reservations?.length ? event.reservations : await fetchReservationsByExperience(event.id);
     const detail = await fetchExperienceDetail(event.id);

@@ -92,6 +92,20 @@ button:hover {
   box-shadow: var(--shadow);
 }
 
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.brand-logo {
+  width: clamp(70px, 12vw, 118px);
+  height: auto;
+  flex: 0 0 auto;
+  display: block;
+}
+
 h1,
 h2,
 p {
@@ -659,6 +673,14 @@ td input {
   .topbar,
   .section-head {
     align-items: flex-start;
+  }
+
+  .brand-row {
+    align-items: flex-start;
+  }
+
+  .brand-logo {
+    width: 74px;
   }
 
   .settings-grid,

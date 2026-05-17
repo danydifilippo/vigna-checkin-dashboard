@@ -520,6 +520,12 @@ async function upsertEventState(req, res) {
       ...arrived.map((payload) => ({ event_id: eventRow.id, dws_id: payload.dwsId || payload.id, section: "arrived", payload, deleted_at: null }))
     ];
 
+    const activeIds = rows.map((row) => row.dws_id).filter(Boolean);
+    let deleteQuery = supabase.from("checkin_reservations").update({ deleted_at: new Date().toISOString() }).eq("event_id", eventRow.id);
+    if (activeIds.length) deleteQuery = deleteQuery.not("dws_id", "in", `(${activeIds.map((id) => `"${String(id).replace(/"/g, '\\"')}"`).join(",")})`);
+    const { error: deleteError } = await deleteQuery;
+    if (deleteError) throw deleteError;
+
     if (rows.length) {
       const { error: reservationsError } = await supabase.from("checkin_reservations").upsert(rows, { onConflict: "event_id,dws_id" });
       if (reservationsError) throw reservationsError;
