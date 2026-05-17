@@ -100,10 +100,15 @@ button:hover {
 }
 
 .brand-logo {
-  width: clamp(70px, 12vw, 118px);
+  width: clamp(54px, 9vw, 82px);
   height: auto;
   flex: 0 0 auto;
   display: block;
+}
+
+.brand-mark {
+  aspect-ratio: 1;
+  object-fit: contain;
 }
 
 h1,
@@ -680,7 +685,7 @@ td input {
   }
 
   .brand-logo {
-    width: 74px;
+    width: 58px;
   }
 
   .settings-grid,
