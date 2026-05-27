@@ -396,7 +396,7 @@ function labelTitle(label) {
 
 function labelKind(label) {
   const title = labelTitle(label).toLowerCase();
-  if (title.includes("adulti") || title.includes("adulto")) return "adulti";
+  if (title.includes("adulti") || title.includes("adulto") || title.includes("vino")) return "adulti";
   if (title.includes("bambini") || title.includes("bambino") || title.includes("bambin")) return "bambini";
   return "altro";
 }
