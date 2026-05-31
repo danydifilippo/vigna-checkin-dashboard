@@ -624,6 +624,36 @@ td input {
   background: #fff;
 }
 
+.dynamic-labels {
+  display: grid;
+  gap: 10px;
+}
+
+.label-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.4fr) repeat(3, minmax(84px, 1fr));
+  gap: 10px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.label-row-title {
+  display: grid;
+  gap: 4px;
+  color: var(--magenta-900);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.label-row-title span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
 .form-group.accent {
   border-color: #a3e6f5;
   background: #f1fcff;
@@ -696,6 +726,7 @@ td input {
 
   .reservation-cards,
   .form-group,
+  .label-row,
   .sheet-totals,
   .sheet-actions {
     grid-template-columns: 1fr;

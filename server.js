@@ -367,7 +367,16 @@ async function proxyExperienceDetail(req, res) {
       return;
     }
 
-    const upstream = await fetch(`https://api.divinea.com/api/v2/experiences/${experienceId}?lang=it`, {
+    const params = new URLSearchParams({
+      page: "1",
+      per_page: "20",
+      experience_ids: experienceId,
+      lang: "it",
+      order_by: "price_cents",
+      order_direction: "asc"
+    });
+
+    const upstream = await fetch(`https://api.divinea.com/api/v2/experiences?${params}`, {
       headers: {
         Accept: "application/json",
         "accept-language": "it",
@@ -384,7 +393,16 @@ async function proxyExperienceDetail(req, res) {
       return;
     }
 
-    sendJson(res, 200, payload);
+    const items = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.content)
+          ? payload.content
+          : Array.isArray(payload?.items)
+            ? payload.items
+            : [];
+    sendJson(res, 200, items[0] || payload);
   } catch (error) {
     sendJson(res, 500, { message: error.message });
   }

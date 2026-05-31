@@ -303,6 +303,8 @@ async function fetchExperienceDetail(experienceId) {
 
   const payload = await parseJsonResponse(response);
   if (!response.ok) return null;
+  if (Array.isArray(payload?.data)) return payload.data[0] || null;
+  if (Array.isArray(payload)) return payload[0] || null;
   return payload?.data || payload;
 }
 
@@ -419,6 +421,116 @@ function labelPriceEuro(label) {
   return parseEuroString(label?.price ?? label?.priceEur ?? label?.unitPrice ?? label?.amountPerUnit);
 }
 
+function normalizeLabelKey(title) {
+  return String(title || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function labelCategoryFromTitle(title) {
+  return String(title || "").toLowerCase().includes("bambin") ? "bambini" : "adulti";
+}
+
+function createPriceLabel(title, price, source = "event") {
+  const cleanTitle = String(title || "").trim();
+  if (!cleanTitle) return null;
+  return {
+    key: normalizeLabelKey(cleanTitle),
+    title: cleanTitle,
+    category: labelCategoryFromTitle(cleanTitle),
+    quantityPren: 0,
+    quantityArr: 0,
+    price: numberValue(price),
+    source
+  };
+}
+
+function buildEventPriceLabels(eventRaw = {}) {
+  const labels = [];
+  const baseTitle = eventRaw.price01_label || eventRaw.price1_label || eventRaw.price_label;
+  if (baseTitle || eventRaw.price) {
+    const base = createPriceLabel(baseTitle || "Adulti", parseEuroString(eventRaw.price), "base");
+    if (base) labels.push(base);
+  }
+
+  for (let index = 2; index <= 10; index += 1) {
+    const padded = String(index).padStart(2, "0");
+    const label = eventRaw[`price${padded}_label`] || eventRaw[`price${index}_label`];
+    const active = eventRaw[`price${padded}_active`] ?? eventRaw[`price${index}_active`];
+    const price = eventRaw[`price${padded}`] ?? eventRaw[`price${index}`];
+    if (!label || String(active) === "false") continue;
+    const item = createPriceLabel(label, parseEuroString(price), `price${padded}`);
+    if (item) labels.push(item);
+  }
+
+  [...(eventRaw.experience_price_labels || eventRaw.experiencePriceLabels || []), ...(eventRaw.experience_price_extras || eventRaw.experiencePriceExtras || [])].forEach((label) => {
+    const item = createPriceLabel(labelTitle(label), labelPriceEuro(label), "experience");
+    if (item) labels.push(item);
+  });
+
+  return mergeLabelRows(labels);
+}
+
+function mergeLabelRows(labels) {
+  const map = new Map();
+  labels.forEach((label) => {
+    if (!label?.key) return;
+    const existing = map.get(label.key);
+    if (!existing) {
+      map.set(label.key, { ...label });
+      return;
+    }
+    existing.quantityPren += numberValue(label.quantityPren);
+    existing.quantityArr += numberValue(label.quantityArr);
+    if (numberValue(label.price) > 0) existing.price = numberValue(label.price);
+    if (label.category === "bambini") existing.category = "bambini";
+  });
+  return [...map.values()];
+}
+
+function getCurrentEventLabels() {
+  const currentRaw =
+    state.currentEvent?.raw ||
+    eventsByDate.find((event) => event.id === state.currentEvent?.id)?.raw ||
+    {};
+  const labels = buildEventPriceLabels(currentRaw);
+  if (labels.length) return labels;
+  const sample = [...state.bookings, ...state.arrived].find((row) => Array.isArray(row.labels) && row.labels.length);
+  return sample ? sample.labels.map((label) => ({ ...label, quantityPren: 0, quantityArr: 0 })) : [];
+}
+
+function upgradeRowLabels(row, eventRaw = {}) {
+  const eventLabels = buildEventPriceLabels(eventRaw);
+  if (!eventLabels.length) return row;
+
+  const currentLabels = Array.isArray(row.labels) ? row.labels : [];
+  let labels = mergeLabelRows([...eventLabels, ...currentLabels.map((label) => ({ ...label }))]);
+
+  if (!currentLabels.length) {
+    const firstAdult = labels.find((label) => label.category !== "bambini");
+    const firstChild = labels.find((label) => label.category === "bambini");
+    if (firstAdult) {
+      firstAdult.quantityPren = numberValue(row.adultiPrenotati);
+      firstAdult.quantityArr = numberValue(row.adulti);
+    }
+    if (firstChild) {
+      firstChild.quantityPren = numberValue(row.bambiniPrenotati);
+      firstChild.quantityArr = numberValue(row.bambini);
+    }
+  }
+
+  labels = mergeLabelRows(labels);
+  return {
+    ...row,
+    labels,
+    adultiPrenotati: labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0),
+    bambiniPrenotati: labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0),
+    adulti: labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityArr), 0),
+    bambini: labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityArr), 0)
+  };
+}
+
 function eventPriceFallbacks(eventRaw = {}) {
   const prices = { adulti: parseEuroString(eventRaw.price), bambini: 0, altro: 0 };
   const labels = [
@@ -491,6 +603,7 @@ function createRow(overrides = {}) {
 
 function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrices = {}) {
   const fallbackPrices = mergePrices(eventPriceFallbacks(eventRaw), eventPrices);
+  const dynamicLabels = buildEventPriceLabels(eventRaw);
   const row = createRow({
     id: String(reservation.id || reservation.reservationId || crypto.randomUUID()),
     dwsId: String(reservation.id || reservation.reservationId || ""),
@@ -503,7 +616,8 @@ function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrice
     stato: reservation.state === "confirmed" ? "Confermato" : reservation.state || "Confermato",
     sourceState: reservation.state,
     eventTitle,
-    prices: fallbackPrices
+    prices: fallbackPrices,
+    labels: dynamicLabels
   });
 
   const labels = [
@@ -518,6 +632,13 @@ function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrice
     const price = labelPriceEuro(label);
     if (price > 0) row.prices[kind] = price;
 
+    const title = labelTitle(label) || (kind === "bambini" ? "Bambini" : "Adulti");
+    const dynamicLabel = createPriceLabel(title, price || row.prices[kind], "reservation");
+    if (dynamicLabel) {
+      dynamicLabel.quantityPren = quantity > 0 ? quantity : 0;
+      row.labels.push(dynamicLabel);
+    }
+
     if (quantity <= 0) return;
 
     if (kind === "adulti") row.adultiPrenotati += quantity;
@@ -525,10 +646,26 @@ function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrice
     if (kind === "altro") row.altroPrenotati += quantity;
   });
 
+  row.labels = mergeLabelRows(row.labels);
+  row.adultiPrenotati = row.labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
+  row.bambiniPrenotati = row.labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
+
   return row;
 }
 
 function computeRow(row) {
+  if (Array.isArray(row.labels) && row.labels.length) {
+    const prenotati = row.labels.reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
+    const arrivati = row.labels.reduce((sum, label) => sum + numberValue(label.quantityArr), 0);
+    const daPagare =
+      row.labels.reduce((sum, label) => sum + numberValue(label.quantityArr) * numberValue(label.price), 0) +
+      numberValue(row.extra) +
+      numberValue(row.bottiglie) -
+      numberValue(row.sconto);
+    const pagato = numberValue(row.paypal) + numberValue(row.cash) + numberValue(row.pos);
+    return { prenotati, arrivati, daPagare, pagato, ancoraDaPagare: daPagare - pagato };
+  }
+
   const adulti = numberValue(row.adulti);
   const bambini = numberValue(row.bambini);
   const altro = numberValue(row.altro);
@@ -564,13 +701,16 @@ async function loadReservationsForEvent(event) {
     const savedEvent = state.eventData[event.id] || {};
     const sharedEvent = publicConfig.hasSupabase ? await fetchSharedEventState(event).catch(() => null) : null;
     if (sharedEvent?.event && (sharedEvent.bookings?.length || sharedEvent.arrived?.length)) {
+      const detail = await fetchExperienceDetail(event.id);
+      const eventRaw = { ...(event.raw || {}), ...(detail || {}) };
       state.currentEvent = {
         id: event.id,
         title: event.title,
-        date: $("#dateFrom").value || dateToday()
+        date: $("#dateFrom").value || dateToday(),
+        raw: eventRaw
       };
-      state.bookings = sharedEvent.bookings || [];
-      state.arrived = sharedEvent.arrived || [];
+      state.bookings = (sharedEvent.bookings || []).map((row) => upgradeRowLabels(row, eventRaw));
+      state.arrived = (sharedEvent.arrived || []).map((row) => upgradeRowLabels(row, eventRaw));
       persistCurrentEventData();
       saveState();
       render();
@@ -578,12 +718,12 @@ async function loadReservationsForEvent(event) {
       return;
     }
 
-    const savedArrived = savedEvent.arrived || [];
-    const savedBookings = savedEvent.bookings || [];
-    const savedManualBookings = savedBookings.filter((row) => !row.dwsId);
     const payload = event.reservations?.length ? event.reservations : await fetchReservationsByExperience(event.id);
     const detail = await fetchExperienceDetail(event.id);
     const eventRaw = { ...(event.raw || {}), ...(detail || {}) };
+    const savedArrived = (savedEvent.arrived || []).map((row) => upgradeRowLabels(row, eventRaw));
+    const savedBookings = (savedEvent.bookings || []).map((row) => upgradeRowLabels(row, eventRaw));
+    const savedManualBookings = savedBookings.filter((row) => !row.dwsId);
     const reservations = arrayFromPayload(payload);
     const eventPrices = mergePrices(eventPriceFallbacks(eventRaw), collectReservationPrices(reservations));
     const stateCounts = countReservationStates(reservations);
@@ -596,7 +736,8 @@ async function loadReservationsForEvent(event) {
     state.currentEvent = {
       id: event.id,
       title: event.title,
-      date: $("#dateFrom").value || dateToday()
+      date: $("#dateFrom").value || dateToday(),
+      raw: eventRaw
     };
     state.bookings = [...savedManualBookings, ...rows];
     state.arrived = savedArrived;
@@ -611,7 +752,8 @@ async function loadReservationsForEvent(event) {
     state.currentEvent = {
       id: event.id,
       title: event.title,
-      date: $("#dateFrom").value || dateToday()
+      date: $("#dateFrom").value || dateToday(),
+      raw: event.raw || {}
     };
     saveAndPersist();
     render();
@@ -670,6 +812,14 @@ function moveToArrived(rowId) {
   if (index < 0) return;
   const [row] = state.bookings.splice(index, 1);
   row.stato = "Arrivati";
+  if (Array.isArray(row.labels) && row.labels.length) {
+    row.labels = row.labels.map((label) => ({
+      ...label,
+      quantityArr: numberValue(label.quantityArr) || numberValue(label.quantityPren)
+    }));
+    row.adulti = row.labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityArr), 0);
+    row.bambini = row.labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityArr), 0);
+  }
   if (!numberValue(row.adulti)) row.adulti = row.adultiPrenotati;
   if (!numberValue(row.bambini)) row.bambini = row.bambiniPrenotati;
   if (!numberValue(row.altro)) row.altro = row.altroPrenotati;
@@ -694,6 +844,25 @@ function cardPaymentLabel(row) {
   return { text: "PayPal no", paid: false };
 }
 
+function cardLabelRows(row, collection) {
+  if (Array.isArray(row.labels) && row.labels.length) {
+    return row.labels
+      .map((label) => {
+        const value = collection === "arrived" ? numberValue(label.quantityArr) : numberValue(label.quantityPren);
+        return `<div><strong>${value}</strong><span>${escapeHtml(label.title)}</span></div>`;
+      })
+      .join("");
+  }
+
+  const suffix = collection === "arrived" ? "arr." : "pren.";
+  const adulti = collection === "arrived" ? numberValue(row.adulti) : numberValue(row.adultiPrenotati);
+  const bambini = collection === "arrived" ? numberValue(row.bambini) : numberValue(row.bambiniPrenotati);
+  return `
+    <div><strong>${adulti}</strong><span>Adulti ${suffix}</span></div>
+    <div><strong>${bambini}</strong><span>Bambini ${suffix}</span></div>
+  `;
+}
+
 function renderReservationCards(selector, rows, collection) {
   const wrap = $(selector);
   wrap.innerHTML = "";
@@ -712,9 +881,6 @@ function renderReservationCards(selector, rows, collection) {
   filteredRows.forEach((row) => {
     const computed = computeRow(row);
     const payment = cardPaymentLabel(row);
-    const firstCount = collection === "arrived" ? numberValue(row.adulti) : numberValue(row.adultiPrenotati);
-    const secondCount = collection === "arrived" ? numberValue(row.bambini) : numberValue(row.bambiniPrenotati);
-    const suffix = collection === "arrived" ? "arr." : "pren.";
     const button = document.createElement("button");
     button.type = "button";
     button.className = `reservation-card ${collection === "arrived" ? "arrived" : ""}`;
@@ -727,8 +893,7 @@ function renderReservationCards(selector, rows, collection) {
         <span class="payment-badge ${payment.paid ? "paid" : ""}">${escapeHtml(payment.text)}</span>
       </div>
       <div class="guest-grid">
-        <div><strong>${firstCount}</strong><span>Adulti ${suffix}</span></div>
-        <div><strong>${secondCount}</strong><span>Bambini ${suffix}</span></div>
+        ${cardLabelRows(row, collection)}
       </div>
       <div class="card-money">
         <div><span>Arrivati</span><strong>${computed.arrivati}</strong></div>
@@ -750,7 +915,8 @@ function addManualReservation() {
   const row = createRow({
     nominativo: "Nuova prenotazione",
     eventTitle: state.currentEvent.title,
-    stato: collectionLabel("bookings")
+    stato: collectionLabel("bookings"),
+    labels: getCurrentEventLabels()
   });
   state.bookings.unshift(row);
   saveAndPersist();
@@ -784,9 +950,47 @@ function openReservationModal(rowId, collection) {
   $("#m-pos").value = row.pos ?? "";
   $("#modalCheckin").style.display = collection === "bookings" ? "" : "none";
   $("#modalBack").style.display = collection === "arrived" ? "" : "none";
+  renderModalLabels(row);
   updateModalTotals();
   $("#reservationModal").classList.add("open");
   $("#reservationModal").setAttribute("aria-hidden", "false");
+}
+
+function renderModalLabels(row) {
+  const wrap = $("#m-labels");
+  wrap.innerHTML = "";
+  const hasLabels = Array.isArray(row.labels) && row.labels.length;
+  document.querySelectorAll(".legacy-counts").forEach((element) => {
+    element.style.display = hasLabels ? "none" : "";
+  });
+  if (!hasLabels) return;
+
+  row.labels.forEach((label, index) => {
+    const div = document.createElement("div");
+    div.className = "label-row";
+    div.innerHTML = `
+      <div class="label-row-title">
+        ${escapeHtml(label.title)}
+        <span>${label.category === "bambini" ? "Bambini" : "Adulti"} - ${euro(label.price)}</span>
+      </div>
+      <label>Prenotati <input data-label-index="${index}" data-label-field="quantityPren" type="number" step="1" value="${numberValue(label.quantityPren)}" /></label>
+      <label>Arrivati <input data-label-index="${index}" data-label-field="quantityArr" type="number" step="1" value="${numberValue(label.quantityArr)}" /></label>
+      <label>Prezzo <input data-label-index="${index}" data-label-field="price" type="number" step="0.01" value="${numberValue(label.price)}" /></label>
+    `;
+    wrap.appendChild(div);
+  });
+}
+
+function readModalLabels() {
+  const row = state[modalContext.collection]?.find((item) => item.id === modalContext.rowId);
+  if (!row?.labels?.length) return null;
+  const labels = row.labels.map((label) => ({ ...label }));
+  document.querySelectorAll("[data-label-index]").forEach((input) => {
+    const index = Number(input.dataset.labelIndex);
+    const field = input.dataset.labelField;
+    labels[index][field] = numberValue(input.value);
+  });
+  return labels;
 }
 
 function closeReservationModal() {
@@ -796,6 +1000,32 @@ function closeReservationModal() {
 }
 
 function readModalValues() {
+  const labels = readModalLabels();
+  if (labels) {
+    return {
+      nominativo: $("#m-nominativo").value,
+      note: $("#m-note").value,
+      labels,
+      adultiPrenotati: labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0),
+      bambiniPrenotati: labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0),
+      altroPrenotati: 0,
+      adulti: labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityArr), 0),
+      bambini: labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityArr), 0),
+      altro: 0,
+      prices: {
+        adulti: numberValue(labels.find((label) => label.category !== "bambini")?.price),
+        bambini: numberValue(labels.find((label) => label.category === "bambini")?.price),
+        altro: 0
+      },
+      sconto: numberValue($("#m-sconto").value),
+      extra: numberValue($("#m-extra").value),
+      bottiglie: numberValue($("#m-bottiglie").value),
+      paypal: numberValue($("#m-paypal").value),
+      cash: numberValue($("#m-cash").value),
+      pos: numberValue($("#m-pos").value)
+    };
+  }
+
   return {
     nominativo: $("#m-nominativo").value,
     note: $("#m-note").value,
