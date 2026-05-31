@@ -347,6 +347,7 @@ function normalizeExperienceEvents(experiences) {
 function normalizeDwsEvents(reservations) {
   const map = new Map();
   reservations.forEach((reservation) => {
+    if (String(reservation.state || "").toLowerCase() === "removed") return;
     const id = String(reservation.experienceId || reservation.experience?.id || reservation.experience_id || "");
     if (!id) return;
     const title =
@@ -419,6 +420,85 @@ function labelPriceEuro(label) {
     label?.amount_cents_per_unit;
   if (cents !== undefined && cents !== null && cents !== "") return centsToEuro(cents);
   return parseEuroString(label?.price ?? label?.priceEur ?? label?.unitPrice ?? label?.amountPerUnit);
+}
+
+function labelQuantity(label) {
+  const direct =
+    label?.quantity ??
+    label?.qty ??
+    label?.count ??
+    label?.totalQuantity ??
+    label?.total_quantity ??
+    label?.reservedQuantity ??
+    label?.reserved_quantity ??
+    label?.selectedQuantity ??
+    label?.selected_quantity ??
+    label?.quantitySelected ??
+    label?.quantity_selected ??
+    label?.number ??
+    label?.value;
+  if (direct !== undefined && direct !== null && direct !== "") return numberValue(direct);
+
+  const nested =
+    label?.reservation?.quantity ??
+    label?.reservationPrice?.quantity ??
+    label?.priceLabel?.quantity ??
+    label?.data?.quantity;
+  return numberValue(nested);
+}
+
+function firstNumberFrom(source, keys) {
+  for (const key of keys) {
+    const value = key.split(".").reduce((acc, part) => acc?.[part], source);
+    if (value !== undefined && value !== null && value !== "") {
+      const number = numberValue(value);
+      if (number > 0) return number;
+    }
+  }
+  return 0;
+}
+
+function reservationGuestQuantities(reservation) {
+  const bambini = firstNumberFrom(reservation, [
+    "children",
+    "childrens",
+    "childrenQuantity",
+    "children_quantity",
+    "childQuantity",
+    "child_quantity",
+    "numberOfChildren",
+    "number_of_children",
+    "kids",
+    "kidsQuantity",
+    "kids_quantity"
+  ]);
+  let adulti = firstNumberFrom(reservation, [
+    "adults",
+    "adulti",
+    "adultsQuantity",
+    "adults_quantity",
+    "adultQuantity",
+    "adult_quantity",
+    "numberOfAdults",
+    "number_of_adults"
+  ]);
+  const totale = firstNumberFrom(reservation, [
+    "people",
+    "guests",
+    "participants",
+    "participantCount",
+    "participant_count",
+    "peopleQuantity",
+    "people_quantity",
+    "quantity",
+    "pax",
+    "totalPeople",
+    "total_people",
+    "numberOfParticipants",
+    "number_of_participants"
+  ]);
+  if (!adulti && totale > bambini) adulti = totale - bambini;
+  return { adulti, bambini };
 }
 
 function normalizeLabelKey(title) {
@@ -607,6 +687,9 @@ function collectReservationPrices(reservations = []) {
   reservations.forEach((reservation) => {
     const labels = [
       ...(reservation.reservationPriceLabels || reservation.reservation_price_labels || []),
+      ...(reservation.priceLabels || reservation.price_labels || []),
+      ...(reservation.labels || []),
+      ...(reservation.items || []),
       ...(reservation.experiencePrices || reservation.experience_prices || []),
       ...(reservation.experiencePriceLabels || reservation.experience_price_labels || [])
     ];
@@ -666,12 +749,15 @@ function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrice
 
   const labels = [
     ...(reservation.reservationPriceLabels || reservation.reservation_price_labels || []),
+    ...(reservation.priceLabels || reservation.price_labels || []),
+    ...(reservation.labels || []),
+    ...(reservation.items || []),
     ...(reservation.experiencePrices || reservation.experience_prices || []),
     ...(reservation.experiencePriceLabels || reservation.experience_price_labels || [])
   ];
 
   labels.forEach((label) => {
-    const quantity = numberValue(label.quantity);
+    const quantity = labelQuantity(label);
     const kind = labelKind(label);
     const price = labelPriceEuro(label);
     if (price > 0) row.prices[kind] = price;
@@ -690,6 +776,18 @@ function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrice
     if (kind === "altro") row.altroPrenotati += quantity;
   });
 
+  row.labels = mergeLabelRows(row.labels);
+  const guestQuantities = reservationGuestQuantities(reservation);
+  const currentAdults = row.labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
+  const currentChildren = row.labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
+  if (guestQuantities.adulti > currentAdults) {
+    const adultLabel = row.labels.find((label) => label.category !== "bambini");
+    if (adultLabel) adultLabel.quantityPren += guestQuantities.adulti - currentAdults;
+  }
+  if (guestQuantities.bambini > currentChildren) {
+    const childLabel = row.labels.find((label) => label.category === "bambini");
+    if (childLabel) childLabel.quantityPren += guestQuantities.bambini - currentChildren;
+  }
   row.labels = mergeLabelRows(row.labels);
   row.adultiPrenotati = row.labels.filter((label) => label.category !== "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
   row.bambiniPrenotati = row.labels.filter((label) => label.category === "bambini").reduce((sum, label) => sum + numberValue(label.quantityPren), 0);
@@ -744,36 +842,19 @@ async function loadReservationsForEvent(event) {
     persistCurrentEventData();
     const savedEvent = state.eventData[event.id] || {};
     const sharedEvent = publicConfig.hasSupabase ? await fetchSharedEventState(event).catch(() => null) : null;
-    if (sharedEvent?.event && (sharedEvent.bookings?.length || sharedEvent.arrived?.length)) {
-      const detail = await fetchExperienceDetail(event.id);
-      const eventRaw = { ...(event.raw || {}), ...(detail || {}) };
-      state.currentEvent = {
-        id: event.id,
-        title: event.title,
-        date: $("#dateFrom").value || dateToday(),
-        raw: eventRaw
-      };
-      state.bookings = (sharedEvent.bookings || []).map((row) => upgradeRowLabels(row, eventRaw));
-      state.arrived = (sharedEvent.arrived || []).map((row) => upgradeRowLabels(row, eventRaw));
-      persistCurrentEventData();
-      saveState();
-      render();
-      setNotice(`Caricato stato salvato in cloud per "${event.title}".`);
-      return;
-    }
-
-    const payload = event.reservations?.length ? event.reservations : await fetchReservationsByExperience(event.id);
+    const savedSource = sharedEvent?.event ? sharedEvent : savedEvent;
+    const payload = await fetchReservationsByExperience(event.id);
     const detail = await fetchExperienceDetail(event.id);
     const eventRaw = { ...(event.raw || {}), ...(detail || {}) };
-    const savedArrived = (savedEvent.arrived || []).map((row) => upgradeRowLabels(row, eventRaw));
-    const savedBookings = (savedEvent.bookings || []).map((row) => upgradeRowLabels(row, eventRaw));
+    const savedArrived = (savedSource.arrived || []).map((row) => upgradeRowLabels(row, eventRaw));
+    const savedBookings = (savedSource.bookings || []).map((row) => upgradeRowLabels(row, eventRaw));
     const savedManualBookings = savedBookings.filter((row) => !row.dwsId);
     const reservations = arrayFromPayload(payload);
     const eventPrices = mergePrices(eventPriceFallbacks(eventRaw), collectReservationPrices(reservations));
     const stateCounts = countReservationStates(reservations);
     const arrivedIds = new Set(savedArrived.map((row) => row.dwsId || row.id).filter(Boolean));
     const rows = reservations
-      .filter((reservation) => reservation.state !== "removed")
+      .filter((reservation) => String(reservation.state || "").toLowerCase() !== "removed")
       .filter((reservation) => !arrivedIds.has(String(reservation.id || reservation.reservationId || "")))
       .map((reservation) => normalizeReservation(reservation, event.title, eventRaw, eventPrices));
 

@@ -430,8 +430,6 @@ async function proxyEventsByDate(req, res) {
       endTime: dateTo,
       lang: "it"
     });
-    ["confirmed", "draft", "waiting", "completed"].forEach((state) => params.append("state", state));
-
     const upstream = await fetch(`${dwsBase}/scheduling/page?${params}`, {
       headers: {
         Authorization: `Bearer ${bearerToken}`,
@@ -476,8 +474,6 @@ async function proxyReservationsByExperience(req, res) {
       experienceId,
       lang: "it"
     });
-    ["confirmed", "draft", "waiting", "completed"].forEach((state) => params.append("state", state));
-
     const upstream = await fetch(`${dwsBase}/scheduling/page?${params}`, {
       headers: {
         Authorization: `Bearer ${bearerToken}`,
