@@ -344,10 +344,14 @@ function normalizeExperienceEvents(experiences) {
     .sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title, "it"));
 }
 
+function isExcludedReservationState(state) {
+  return ["removed", "revoked"].includes(String(state || "").toLowerCase());
+}
+
 function normalizeDwsEvents(reservations) {
   const map = new Map();
   reservations.forEach((reservation) => {
-    if (String(reservation.state || "").toLowerCase() === "removed") return;
+    if (isExcludedReservationState(reservation.state)) return;
     const id = String(reservation.experienceId || reservation.experience?.id || reservation.experience_id || "");
     if (!id) return;
     const title =
@@ -762,8 +766,8 @@ function normalizeReservation(reservation, eventTitle, eventRaw = {}, eventPrice
     const price = labelPriceEuro(label);
     if (price > 0) row.prices[kind] = price;
 
-    const title = labelTitle(label) || (kind === "bambini" ? "Bambini" : "Adulti");
-    const dynamicLabel = createPriceLabel(title, price || row.prices[kind], "reservation");
+    const title = labelTitle(label);
+    const dynamicLabel = title ? createPriceLabel(title, price || row.prices[kind], "reservation") : null;
     if (dynamicLabel) {
       dynamicLabel.quantityPren = quantity > 0 ? quantity : 0;
       row.labels.push(dynamicLabel);
@@ -854,7 +858,7 @@ async function loadReservationsForEvent(event) {
     const stateCounts = countReservationStates(reservations);
     const arrivedIds = new Set(savedArrived.map((row) => row.dwsId || row.id).filter(Boolean));
     const rows = reservations
-      .filter((reservation) => String(reservation.state || "").toLowerCase() !== "removed")
+      .filter((reservation) => !isExcludedReservationState(reservation.state))
       .filter((reservation) => !arrivedIds.has(String(reservation.id || reservation.reservationId || "")))
       .map((reservation) => normalizeReservation(reservation, event.title, eventRaw, eventPrices));
 
@@ -869,7 +873,7 @@ async function loadReservationsForEvent(event) {
     saveAndPersist();
     setNotice(
       rows.length
-        ? `Importate ${rows.length} prenotazioni per "${event.title}" escluse removed. Stati: ${formatStateCounts(stateCounts)}.`
+        ? `Importate ${rows.length} prenotazioni per "${event.title}" escluse removed/revoked. Stati: ${formatStateCounts(stateCounts)}.`
         : `Nessuna prenotazione importabile per "${event.title}". Ricevute ${reservations.length} righe totali: ${formatStateCounts(stateCounts)}.`
     );
     render();
