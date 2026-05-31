@@ -472,6 +472,50 @@ function buildEventPriceLabels(eventRaw = {}) {
   return mergeLabelRows(labels);
 }
 
+function stripHtml(value) {
+  const div = document.createElement("div");
+  div.innerHTML = String(value || "");
+  return div.textContent.replace(/\s+/g, " ").trim();
+}
+
+function eventDescription(event) {
+  const raw = event.raw || {};
+  const text =
+    raw.description_translations?.it ||
+    raw.descriptionTranslations?.it ||
+    raw.description ||
+    raw.short_description_translations?.it ||
+    raw.shortDescriptionTranslations?.it ||
+    raw.short_description ||
+    raw.shortDescription ||
+    raw.subtitle_translations?.it ||
+    raw.subtitle ||
+    "";
+  return stripHtml(text);
+}
+
+function eventPriceLabels(event) {
+  const labels = buildEventPriceLabels(event.raw || {});
+  if (labels.length) return labels;
+  if (!event.price) return [];
+  return [createPriceLabel("Ingresso", parseEuroString(event.price), "summary")].filter(Boolean);
+}
+
+async function enrichEventsWithDetails(events) {
+  return Promise.all(
+    events.map(async (event) => {
+      const detail = await fetchExperienceDetail(event.id).catch(() => null);
+      if (!detail) return event;
+      return {
+        ...event,
+        price: event.price || (detail.price ? `${detail.price_symbol || "€"}${detail.price}` : ""),
+        duration: event.duration || formatDuration(detail.duration),
+        raw: { ...(event.raw || {}), ...detail }
+      };
+    })
+  );
+}
+
 function mergeLabelRows(labels) {
   const map = new Map();
   labels.forEach((label) => {
@@ -1085,6 +1129,8 @@ function renderEvents() {
   wrap.innerHTML = "";
 
   eventsByDate.forEach((event) => {
+    const description = eventDescription(event);
+    const labels = eventPriceLabels(event);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "event-card";
@@ -1095,7 +1141,22 @@ function renderEvents() {
         ${event.duration ? `<span class="pill cyan">${escapeHtml(event.duration)}</span>` : ""}
         ${event.source === "crm-inactive" ? `<span class="pill">disattivato/CRM</span>` : ""}
       </div>
-      <small>Clicca per importare le prenotazioni confirmed</small>
+      ${description ? `<p class="event-description">${escapeHtml(description).slice(0, 220)}</p>` : ""}
+      ${
+        labels.length
+          ? `<div class="event-price-list">${labels
+              .map(
+                (label) => `
+                  <div>
+                    <span>${escapeHtml(label.title)}</span>
+                    <strong>${euro(label.price)}</strong>
+                  </div>
+                `
+              )
+              .join("")}</div>`
+          : ""
+      }
+      <small>Apri dettaglio prenotazioni</small>
     `;
     button.addEventListener("click", () => importEvent(event.id));
     wrap.appendChild(button);
@@ -1485,7 +1546,7 @@ function bindEvents() {
     setNotice("Ricerca eventi in corso...");
     try {
       const payload = await fetchExperiences($("#dateFrom").value, $("#dateTo").value);
-      eventsByDate = normalizeExperienceEvents(arrayFromPayload(payload));
+      eventsByDate = await enrichEventsWithDetails(normalizeExperienceEvents(arrayFromPayload(payload)));
       renderEvents();
       setNotice(eventsByDate.length ? `Trovate ${eventsByDate.length} esperienze. Clicca un titolo per selezionare l'evento.` : "Nessuna esperienza trovata per questa data.");
     } catch (error) {
